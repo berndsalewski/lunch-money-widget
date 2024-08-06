@@ -1,4 +1,4 @@
-Disclaimer: I had too much time on my hands and wanted to fix some issues with this nice widget from @aryascripts.
+Disclaimer: based on the great widget from @aryascripts.
 
 # Lunch Money Widget
 An iOS Widget for LunchMoney Status updates, a quick glance that you can have on your phone or iPad.
