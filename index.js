@@ -3,11 +3,14 @@
 *****************************************************/
 const COLORS = {
   bg1: '#1D1F21',
-  bg2: '#282A2E'
+  bg2: '#282A2E',
+  error1: '#800000',
+  error2: '#080000'
 };
-const FONT_NAME = 'Menlo';
-const FONT_SIZE = 12;
-const regularFont = new Font(FONT_NAME, FONT_SIZE);
+
+const FONT_NAME = "Menlo"
+const regularFont = new Font(FONT_NAME, 11);
+const smallFont = new Font(FONT_NAME, 9);
 const regularColor = Color.white();
 
 const BASE_URL = 'https://dev.lunchmoney.app';
@@ -23,10 +26,15 @@ const CACHED_MS = 7200000; // 2 hours
 const ICLOUD = "iCloud";
 const LOCAL = "local";
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-/****************************************************
-             SETUP
-*****************************************************/
 
+const USE_PAY_CYCLE = args.widgetParameter != null
+const PAY_CYCLE_ID = args.widgetParameter;
+
+/****************************************************
+ SETUP
+ *****************************************************/
+
+const Layout = initLayout();
 const cache = new Cache(ICLOUD);
 const LM_ACCESS_TOKEN = await getApiKey();
 const widget = await getWidget();
@@ -39,91 +47,49 @@ Script.complete();
 *****************************************************/
 
 async function getWidget() {
+  const lunchMoneyData = await getAllData();
+  
   const widget = new ListWidget();
-  const gradient = getLinearGradient(COLORS.bg1, COLORS.bg2);
+  widget.title = "Lunch Money";
+
+  let gradient;
+  if(lunchMoneyData.accountsInError > 0){
+    gradient = getLinearGradient(COLORS.error1, COLORS.error2);
+  }else{
+    gradient = getLinearGradient(COLORS.bg1, COLORS.bg2);
+  }
   widget.backgroundGradient = gradient;
-  widget.setPadding(10, 18, 10, 18);
   
   const mainStack = widget.addStack();
   mainStack.layoutVertically();
   mainStack.spacing = 2;
-  mainStack.size = new Size(320, 0);
   
-  const data = await getAllData();
-  
-  const headingStack = mainStack.addStack();
-  headingStack.layoutHorizontally();
-  headingStack.addSpacer();
-  const line = headingStack.addText(`💰 LUNCH MONEY - ${MONTHS[new Date().getMonth()]} 💰`);
-  headingStack.addSpacer();
-  line.font = regularFont;
-  line.textColor = regularColor;
-  line.centerAlignText();  
-  
-  // INCOME and EXPENSES
-  const budget = mainStack.addStack();
-  budget.layoutHorizontally();
-  const incomeText = budget.addText("💵 Income: ");
-  incomeText.font = regularFont;
-  incomeText.textColor = regularColor;
-  const incomeNum = budget.addText(data.income);
-  incomeNum.font = regularFont;
-  incomeNum.textColor = Color.green();
-  const expenseText = budget.addText(" 🛍 Expense: ");
-  expenseText.font = regularFont;
-  expenseText.textColor = regularColor;
-  const expenseNum = budget.addText(data.spent);  
-  expenseNum.font = regularFont;
-  expenseNum.textColor = Color.red();
-  budget.addSpacer();
-  
-  const savingsStack = mainStack.addStack();
-  savingsStack.layoutHorizontally();
-  const savingsText = savingsStack.addText("🏦 Your current savings rate: ");
-  savingsText.font = regularFont;
-  savingsText.textColor = regularColor;
-  const savingsNum = savingsStack.addText(data.savings ?? "$0.00");
-  savingsNum.font = regularFont;
-  savingsNum.textColor = data.savings?.startsWith('-') ? Color.red() : Color.green();
-  savingsStack.addSpacer();
-  
-  
-  // ACCOUNTS and TRANSACTIONS
-  const accounts = mainStack.addText(`⏳ Awaiting Review: ${data.pendingTransactions} | ❗️ Accounts Err: ${data.accountsInError}`);
-  accounts.font = regularFont;
-  accounts.textColor = regularColor;
-  
-  const lastUpdated = mainStack.addText(`🕒 Oldest Balance Updates:`);
-  lastUpdated.textColor = regularColor;
-  lastUpdated.font = regularFont;
-  const plaid = mainStack.addText(`   - Plaid: ${data.plaidOldestUpdate}`);
-  plaid.font = regularFont;
-  plaid.textColor = regularColor;
-  
-  const manual = mainStack.addText(`   - Manual: ${data.manualOldestUpdate}`);
-  manual.font = regularFont;
-  manual.textColor = regularColor;
-  
-  const message = mainStack.addText(getMessageToDisplay(data));
-  message.font = regularFont;
-  message.textColor = regularColor;
-  
-  mainStack.addSpacer();
-  widget.title = "Lunch Money";
+  const widgetFamily = config.widgetFamily;
+  Layout[widgetFamily](mainStack, lunchMoneyData);
+
   return widget;
 };
 
 async function getAllData() {
   const cached = cache.get(CACHE_KEY, CACHED_MS);
-  if (cached) return JSON.parse(cached);
+  if (cached) {
+    console.log("get data from cache");
+    return JSON.parse(cached);
+  }
   
-  
+  console.log("get data from api server");
+
   const responses = await Promise.all([
     lunchMoneyGetPendingTransactions(),
     lunchMoneyGetPlaidAccountsInfo(),
-    lunchMoneyGetBudgetInfo(),
+    lunchMoneyGetIncomeAndExpenseData(),
     lunchMoneyGetAssetsInfo(),
   ])
+
+  if(!responses[0]){
+    console.log("force get data from cache");
+    return JSON.parse(cache.forceGet(CACHE_KEY));
+  }
   
   const data = {
     pendingTransactions: responses[0],
@@ -136,20 +102,6 @@ async function getAllData() {
   return data;
 }
 
-function getMessageToDisplay(data) {
-  if (data.pendingTransactions > 6) {
-    return "📝 You've got some transactions to review!";
-  }
-  if (data.accountsInError > 1) {
-    return "🧾 Some accounts need your attention.";
-  }
-  if (data.savings?.startsWith('-')) {
-    return "💳 Looks little rough, try and save more!";  
-  }
-  else {
-    return "🤑 You're doing great with your saving!";
-  }
-}
 /****************************************************
              UI FUNCTIONS
 *****************************************************/
@@ -163,159 +115,6 @@ function getLinearGradient(color1, color2) {
 
 /****************************************************
             API
-*****************************************************/
-
-
-async function lunchMoneyGetPendingTransactions() {
-  const url = `${BASE_URL}/v1/transactions`;
-  const params = {
-    limit: 50,
-    status: "uncleared"
-  };
-  try {
-    const res = await makeLunchMoneyRequest(url, params);
-    return res.transactions.length;
-  } catch (e) {
-    return "?";
-  }
-}
-
-async function lunchMoneyGetAssetsInfo() {
-  const url = `${BASE_URL}/v1/assets`;
-  try {
-    const res = await makeLunchMoneyRequest(url);
-    let manualLastUpdate = new Date();
-    let account = "";
-    res.assets.forEach(acc => {
-      const thisAccount = new Date(acc.balance_as_of);
-      if (thisAccount < manualLastUpdate) {
-        manualLastUpdate = thisAccount;
-        account = acc.display_name ?? acc.name;
-      }
-    });
-    
-    const value = getReadableDate(manualLastUpdate) + " - " + account;
-    
-    return {
-      manualOldestUpdate: value
-    }
-  } catch (e) {
-    console.error(e);
-    return "?";
-  }
-}
-
-async function lunchMoneyGetPlaidAccountsInfo() {
-  const ignore = ["active", "inactive", "syncing"];
-  const url = `${BASE_URL}/v1/plaid_accounts`;
-  try {
-    const res = await makeLunchMoneyRequest(url);
-    let plaidLastUpdate = new Date();
-    res.plaid_accounts.forEach(acc => {
-      const thisAccount = new Date(acc.balance_last_update);
-      if (thisAccount < plaidLastUpdate) plaidLastUpdate = thisAccount;
-    });
-    
-    return {
-      accountsInError: res.plaid_accounts
-        .filter(acc => !ignore.some(ig => ig === acc.status))
-        .length,
-      plaidOldestUpdate: getReadableDate(plaidLastUpdate)
-    }
-  } catch (e) {
-    return {
-     accountsInError: "?",
-     plaidOldestUpdate: "?" 
-    }
-  }
-}
-
-function getReadableDate(date) {
-  const now = new Date();
-  const diff = now.valueOf() - date.valueOf();
-  const hours = Math.round(hrs = diff / 3600000);
-  return hours > 24 ? `${Math.round(hours / 24)} days` : `${hours} hours`;
-}
-
-async function lunchMoneyGetBudgetInfo() {
-  // savings rate, income, total spent
-  const url = `${BASE_URL}/v1/budgets`;
-  const dates = getMonthStart();
-  const params = { ...dates };
-  const data = {
-    income: 0,
-    spent: 0,
-    savings: 0
-  };
-  
-  try {
-    const res = await makeLunchMoneyRequest(url, params);
-    res?.forEach(cat => {
-      if (!cat.exclude_from_budget && 
-          !cat.exclude_from_totals &&
-          !cat.is_group) {
-        const k = Object.keys(cat.data)[0];
-        const catData = cat.data[k];
-        const nonRecurring = Math.abs(catData?.spending_to_base ?? 0);
-        const recurring = 
-          cat.recurring?.list?.reduce(
-            (sum, next) => sum + Math.abs(next.to_base), 0)
-          ?? 0;
-        if (cat.is_income) {
-          data.income += nonRecurring + recurring;
-        } else {
-          data.spent += nonRecurring + recurring;
-        }
-      }
-    });
-    return {
-      income: `$${data.income.toFixed(2)}`,
-      spent: `$${data.spent.toFixed(2)}`,
-      savings: `${(((data.income - data.spent) / data.income) * 100).toFixed(2)}%`,
-    };
-  } catch (e) {
-    console.error(e);
-    return { income: '?', spent: '?' };
-  }
-}
-
-function makeLunchMoneyRequest(url, params = {}) {
-  const headers = {
-    'Authorization': `Bearer ${LM_ACCESS_TOKEN}`,
-    'Content-Type': 'application/json'
-  };
-  return makeRequest(url, params, headers);
-}
-
-function makeRequest(url, params, headers, method = 'GET') {
-  let query = ``;
-  Object.keys(params).forEach((key, i) => {
-    const value = params[key];
-    query += i === 0 ? '?' : '&';
-    query += `${key}=${value}`;
-  });
-  const req = new Request(url + query);
-  req.headers = headers;
-  req.method = method;
-  
-  return req.loadJSON();
-}
-
-/****************************************************
-            Utilities
-*****************************************************/
-
-function getMonthStart() {
-  const now = new Date();
-  const month = now.getMonth()+1;
-  const monthStr = month < 10 ? "0" + month : month;
-  const start_date = `${now.getFullYear()}-${monthStr}-01`;
-  const end_date = `${now.getFullYear()}-${monthStr}-10`;
-return { start_date, end_date };
-}
-
-/****************************************************
-            File Management
 *****************************************************/
 
 async function getApiKey() {
@@ -337,6 +136,193 @@ async function getApiKey() {
   saveToFile(apiKey, API_FILE, option === 0 ? "Device" : "iCloud");
   return apiKey;
 }
+
+async function lunchMoneyGetPendingTransactions() {
+  const url = `${BASE_URL}/v1/transactions`;
+  const params = {
+    limit: 50,
+    status: "uncleared"
+  };
+  try {
+    const response = await sendLunchMoneyRequest(url, params);
+    return response.transactions.length;
+  } catch (e) {
+    console.error(e);
+    return null;
+  }
+}
+
+async function lunchMoneyGetAssetsInfo() {
+  const url = `${BASE_URL}/v1/assets`;
+  try {
+    const res = await sendLunchMoneyRequest(url);
+    let manualLastUpdate = new Date();
+    let account = "";
+    res.assets.forEach(acc => {
+      const thisAccount = new Date(acc.balance_as_of);
+      if (thisAccount < manualLastUpdate) {
+        manualLastUpdate = thisAccount;
+        account = acc.display_name ?? acc.name;
+      }
+    });
+    
+    const value = getReadableDate(manualLastUpdate) + " - " + account;
+    
+    return {
+      manualOldestUpdate: value
+    }
+  } catch (e) {
+    console.error(e);
+    return null;
+  }
+}
+
+async function lunchMoneyGetPlaidAccountsInfo() {
+  const ignore = ["active", "inactive", "syncing"];
+  const url = `${BASE_URL}/v1/plaid_accounts`;
+  try {
+    const response = await sendLunchMoneyRequest(url);
+    let oldestUpdate = new Date();
+    response.plaid_accounts.forEach(account => {
+      const lastUpdate = new Date(account.balance_last_update);
+      if (lastUpdate < oldestUpdate) oldestUpdate = lastUpdate;
+    });
+    
+    return {
+      accountsInError: response.plaid_accounts
+        .filter(account => !ignore.some(ig => ig === account.status))
+        .length,
+      plaidOldestUpdate: getReadableDate(oldestUpdate)
+    }
+  } catch (e) {
+    console.error(e);
+    return null;
+  }
+}
+
+//TODO calculating income and expenses should not go through the budget endpoint
+async function lunchMoneyGetIncomeAndExpenseData() {
+  // savings rate, income, total spent
+  const url = `${BASE_URL}/v1/transactions`;
+  const dates = USE_PAY_CYCLE ? getStartAndEndDateForPayCycle() : null;
+  const params = { ...dates};
+  var income = 0;
+  var spent = 0
+  
+  try {
+    const response = await sendLunchMoneyRequest(url, params);
+
+    const lastTransactions = [];
+    const maxLastTransactions = 8;
+    let currentIndex = 0;
+
+    var limit = response?.transactions?.length - 1;
+    for(var i = limit; i >= 0; i--)
+    {
+      var transaction = response.transactions[i];
+
+      // display transaction in widget: IF NOT a group transaction AND NOT a splitted transaction
+      if((transaction.is_group == false && !transaction.hasChildren) && currentIndex < maxLastTransactions){
+        lastTransactions[currentIndex++] = transaction;
+        // console.log(transaction);
+      }
+      
+      // use transaction for calculating totals: IF transaction is excluded from totals OR is a split transaction OR is a group transaction
+      if(transaction.exclude_from_totals || transaction.hasChildren || transaction.group_id != null){
+        continue;
+      }
+      console.log(transaction)
+      if(transaction.is_income) {
+        // for some reason positive amount come with a negative value and vice versa
+        income += -transaction.to_base;
+      }
+      else{
+        spent += transaction.to_base;
+      }
+
+      // console.log(`${i}. ${transaction.notes}`);
+
+      if(USE_PAY_CYCLE && transaction.is_income && transaction.notes == PAY_CYCLE_ID){
+        //console.log(`Salary found by ${transaction.payee}`);
+        break;
+      }
+    }
+
+    return {
+      income: income.toFixed(2),
+      spent: spent.toFixed(2),
+      savings: income > 0 ? ((income - spent) / income * 100).toFixed(2)+`%` : "0",
+      total: (income - spent).toFixed(2),
+      lastTransactions: lastTransactions
+    };
+  } catch (e) {
+    console.error(e);
+    return null;
+  }
+}
+
+function sendLunchMoneyRequest(url, params = {}) {
+  var headers;
+  if(LM_ACCESS_TOKEN.includes("Bearer")){
+    headers = {
+      'Authorization': LM_ACCESS_TOKEN,
+      'Content-Type': 'application/json'
+    };
+  }
+  else{
+    headers = {
+      'Authorization': `Bearer ${LM_ACCESS_TOKEN}`,
+      'Content-Type': 'application/json'
+    };
+  }
+
+  return sendHTTPRequest(url, params, headers);
+}
+
+function sendHTTPRequest(url, params, headers, method = 'GET') {
+  let query = ``;
+  Object.keys(params).forEach((key, i) => {
+    const value = params[key];
+    query += i === 0 ? '?' : '&';
+    query += `${key}=${value}`;
+  });
+  const request = new Request(url + query);
+  //console.log(`Request to: ${url + query}`);
+  request.headers = headers;
+  request.method = method;
+  
+  return request.loadJSON();
+}
+
+/****************************************************
+            Utilities
+*****************************************************/
+
+function getStartAndEndDateForPayCycle() {
+  const now = new Date();
+  let month = now.getMonth();
+  let day = now.getDate();
+  if(day<10)day="0"+day;
+  const prevMonthStr = month < 10 ? "0" + month : month;
+  month++;
+  const currentMonthStr = month < 10 ? "0" + month : month;
+  const start_date = `${now.getFullYear()}-${prevMonthStr}-01`;
+  //console.log(`start_date: ${start_date}`);
+  const end_date = `${now.getFullYear()}-${currentMonthStr}-${day}`;
+  //console.log(`end_date: ${end_date}`);
+return {start_date, end_date};
+}
+
+function getReadableDate(date) {
+  const now = new Date();
+  const diff = now.valueOf() - date.valueOf();
+  const hours = Math.round(hrs = diff / 3600000);
+  return hours > 24 ? `${Math.round(hours / 24)} days` : `${hours} hours`;
+}
+
+/****************************************************
+            File Management
+*****************************************************/
 
 function saveToFile(content, key, storage = "iCloud") {
     const folder = iCloud.documentsDirectory() + "/LunchMoneyWidget";
@@ -374,32 +360,280 @@ function doesFileExist(filePath) {
 }
 
 function Cache(storage) {
-  const manager = storage === ICLOUD
+  const fileManager = storage === ICLOUD
     ? FileManager.iCloud()
     : FileManager.local();
     
-  const dir = manager.documentsDirectory();
+  const documentsDirectory = fileManager.documentsDirectory();
     
   const set = (key, content) => {
-    const folder = dir + "/" + BASE_FILE;
-    manager.createDirectory(folder, true);
-    manager.writeString(folder + "/" + key, content);
+    const folder = documentsDirectory + "/" + BASE_FILE;
+    fileManager.createDirectory(folder, true);
+    fileManager.writeString(folder + "/" + key, content);
+    // console.log(`save to cache: ${folder + "/" + key}`)
+    // console.log(content);
   }
   
-  const get = (key, millis) => {
-    const oldestAccepted = new Date(Date.now() - millis);
-    const filePath = dir + "/" + BASE_FILE + "/" + key;
-    const date = manager.creationDate(filePath);
-    const accepted = date > oldestAccepted;
+  const get = (key, cutOffTimeInMs) => {
+    const cacheFilePath = documentsDirectory + "/" + BASE_FILE + "/" + key;
+    const cacheCutOffDate = new Date(Date.now() - cutOffTimeInMs);
+    const dateOfCacheModification = fileManager.modificationDate(cacheFilePath);
+    const getFromCache = dateOfCacheModification > cacheCutOffDate;
+    //Debug cache info
+    // console.log(`Cache expired: ${!getFromCache}`);
+    // console.log(`Cache read at: ${cacheFilePath}`);
+    // console.log(`Cache last modified: \t${dateOfCacheModification}`);
+    // console.log(`Cache expiry date: \t${cacheCutOffDate}`);
     try {
-      return accepted
-        ? manager.readString(filePath)
+      return getFromCache
+        ? fileManager.readString(cacheFilePath)
         : null;
     } catch(e) {
       console.error(e);
       return null;
     }
   }
+
+  const forceGet = (key) => {
+    const cacheFilePath = documentsDirectory + "/" + BASE_FILE + "/" + key;
+    try {
+      return fileManager.readString(cacheFilePath);
+    } catch(e) {
+      console.error(e);
+      return null;
+    }
+  }
   
-  return { set, get };
+  return { set, get, forceGet };
+}
+
+/****************************************************
+            Widget Layouts
+*****************************************************/
+
+function initLayout()
+{
+  let Layout = {};
+  Layout.medium = function(mainStack, lunchMoneyData){
+    // HEADER
+    const headingStack = mainStack.addStack();
+    headingStack.layoutHorizontally();
+    headingStack.addSpacer();
+    const headerText = headingStack.addText(`💰 LUNCH MONEY - ${USE_PAY_CYCLE ? "Current Pay cycle" : MONTHS[new Date().getMonth()]} 💰`);
+    headingStack.addSpacer();
+    headerText.font = regularFont;
+    headerText.textColor = regularColor;
+    headerText.centerAlignText();  
+    mainStack.addSpacer(2);
+    
+    // INCOME
+    const incomeStack = mainStack.addStack();
+    incomeStack.layoutHorizontally();
+    const incomeText = incomeStack.addText("🟢 Total Income: ");
+    incomeText.font = regularFont;
+    incomeText.textColor = regularColor;
+    incomeStack.addSpacer();
+    const incomeNum = incomeStack.addText(lunchMoneyData.income);
+    incomeNum.font = regularFont;
+    incomeNum.textColor = Color.green();
+    incomeNum.rightAlignText();
+
+    // EXPENSES
+    const expenseStack = mainStack.addStack();
+    expenseStack.layoutHorizontally();
+    const expenseText = expenseStack.addText("🔴 Total Expenses: ");
+    expenseText.font = regularFont;
+    expenseText.textColor = regularColor;
+    expenseStack.addSpacer();
+    const expenseNum = expenseStack.addText(lunchMoneyData.spent);  
+    expenseNum.font = regularFont;
+    expenseNum.textColor = Color.red();
+    expenseNum.rightAlignText();
+
+    // TOTAL
+    const totalStack = mainStack.addStack();
+    totalStack.layoutHorizontally();
+    const totalText = totalStack.addText("💰 Net Income: ");
+    totalText.font = regularFont;
+    totalText.textColor = regularColor;
+    totalStack.addSpacer();
+    const totalNum = totalStack.addText(lunchMoneyData.total);  
+    totalNum.font = regularFont;
+    totalNum.textColor = parseFloat(lunchMoneyData.total) >= 0 ? Color.green() : Color.red();
+    totalNum.rightAlignText();
+
+    // SAVINGS
+    const savingsStack = mainStack.addStack();
+    savingsStack.layoutHorizontally();
+    const savingsText = savingsStack.addText("🏦 Savings rate: ");
+    savingsText.font = regularFont;
+    savingsText.textColor = regularColor;
+    savingsStack.addSpacer();
+    const savingsNum = savingsStack.addText(lunchMoneyData.savings);
+    savingsNum.font = regularFont;
+    savingsNum.textColor = lunchMoneyData.savings?.startsWith('-') ? Color.red() : Color.green();
+    savingsNum.rightAlignText();
+    
+    // PENDING TRANSACTIONS
+    if(lunchMoneyData.pendingTransactions > 0){
+      const transactionsStack = mainStack.addStack();
+      transactionsStack.layoutHorizontally();
+      const transactionsText = transactionsStack.addText("⏳ Pending Reviews:");
+      transactionsText.font = regularFont;
+      transactionsText.textColor = regularColor;
+      transactionsStack.addSpacer();
+      const pendingNum = transactionsStack.addText(lunchMoneyData.pendingTransactions.toString());
+      pendingNum.font = regularFont;
+      pendingNum.textColor = regularColor;
+      pendingNum.rightAlignText();
+    }
+    
+    // SYNC ERROR
+    if(lunchMoneyData.accountsInError > 0)
+    {
+      const message = mainStack.addText(`❗ Sync Error(s) in ${lunchMoneyData.accountsInError} Account(s).`);
+      message.font = regularFont;
+      message.textColor = Color.red();
+    }
+    // ACCOUNT UPDATES
+    else{
+    const oldestUpdates = mainStack.addText(`Oldest Balance Syncs`);
+    oldestUpdates.textColor = regularColor;
+    oldestUpdates.font = regularFont;
+
+    const plaid = mainStack.addText(`     - Plaid: ${lunchMoneyData.plaidOldestUpdate}`);
+    plaid.font = smallFont;
+    plaid.textColor = regularColor;
+    
+    const manual = mainStack.addText(`     - Manual: ${lunchMoneyData.manualOldestUpdate}`);
+    manual.font = smallFont;
+    manual.textColor = regularColor;
+    }
+  }
+
+  Layout.small = function (mainStack, lunchMoneyData){
+    // HEADER
+    const headingStack = mainStack.addStack();
+    headingStack.layoutHorizontally();
+    //headingStack.centerAlignContent();
+    headingStack.addSpacer();
+    const headerText = headingStack.addText("LUNCH MONEY");
+    //headerText.centerAlignText();
+    headingStack.addSpacer();
+    headerText.font = regularFont;
+    headerText.textColor = regularColor;
+    headerText.centerAlignText(); 
+    mainStack.addSpacer(5);
+
+    // INCOME
+    const incomeStack = mainStack.addStack();
+    incomeStack.layoutHorizontally();
+    const incomeText = incomeStack.addText("🟢");
+    incomeText.font = regularFont;
+    incomeText.textColor = regularColor;
+    incomeStack.addSpacer();
+    const incomeNum = incomeStack.addText(lunchMoneyData.income);
+    incomeNum.font = regularFont;
+    incomeNum.textColor = Color.green();
+    incomeNum.rightAlignText();
+
+    // EXPENSES
+    const expenseStack = mainStack.addStack();
+    expenseStack.layoutHorizontally();
+    const expenseText = expenseStack.addText("🔴");
+    expenseText.font = regularFont;
+    expenseText.textColor = regularColor;
+    expenseStack.addSpacer();
+    const expenseNum = expenseStack.addText(lunchMoneyData.spent);  
+    expenseNum.font = regularFont;
+    expenseNum.textColor = Color.red();
+    expenseNum.rightAlignText();
+
+    // TOTAL
+    const totalStack = mainStack.addStack();
+    totalStack.layoutHorizontally();
+    const totalText = totalStack.addText("💰");
+    totalText.font = regularFont;
+    totalText.textColor = regularColor;
+    totalStack.addSpacer();
+    const totalNum = totalStack.addText(lunchMoneyData.total);  
+    totalNum.font = regularFont;
+    totalNum.textColor = parseFloat(lunchMoneyData.total) >= 0 ? Color.green() : Color.red();
+    totalNum.rightAlignText();
+
+    // SAVINGS
+    const savingsStack = mainStack.addStack();
+    savingsStack.layoutHorizontally();
+    const savingsText = savingsStack.addText("🏦");
+    savingsText.font = regularFont;
+    savingsText.textColor = regularColor;
+    savingsStack.addSpacer();
+    const savingsNum = savingsStack.addText(lunchMoneyData.savings);
+    savingsNum.font = regularFont;
+    savingsNum.textColor = lunchMoneyData.savings?.startsWith('-') ? Color.red() : Color.green();
+    savingsNum.rightAlignText();
+
+    // PENDING TRANSACTIONS
+    if(lunchMoneyData.pendingTransactions > 0){
+      mainStack.addSpacer(5);
+      const transactionsStack = mainStack.addStack();
+      transactionsStack.layoutHorizontally();
+      const transactionsText = transactionsStack.addText("⏳");
+      transactionsText.font = regularFont;
+      transactionsText.textColor = regularColor;
+      transactionsStack.addSpacer();
+      const pendingNum = transactionsStack.addText(lunchMoneyData.pendingTransactions.toString());
+      pendingNum.font = regularFont;
+      pendingNum.textColor = regularColor;
+      pendingNum.rightAlignText();
+    }
+
+    // ERROR
+    if(lunchMoneyData.accountsInError > 0){
+        const message = mainStack.addText(`❗ Sync Error`);
+        message.font = regularFont;
+        message.textColor = Color.red();
+    }
+
+    mainStack.addSpacer();
+  }
+
+  Layout.large = function(mainStack, lunchMoneyData){
+    Layout.medium(mainStack, lunchMoneyData);
+
+    mainStack.addSpacer(10);
+    const t = mainStack.addText("-------------------------------------------");
+    t.font = regularFont;
+    t.textColor = regularColor;
+    mainStack.addSpacer(5);
+
+    const transactions = lunchMoneyData.lastTransactions;
+
+    for (let i = 0; i < transactions.length; i++){
+      addTransactionRow(transactions[i], mainStack);
+    }
+
+    mainStack.addSpacer();
+  }
+
+  Layout.extraLarge = Layout.large;
+  //when running the script from the app config.widgetFamily is undefined, don't excute layout logic in that case
+  Layout.undefined = function(mainStack, lunchMoneyData){};
+  return Layout;
+}
+
+function addTransactionRow(transaction, mainStack){
+  const line = mainStack.addStack();
+  line.layoutHorizontally();
+
+  let t = line.addText(`${transaction["date"]} ${transaction["payee"]}`);
+  t.font = regularFont;
+  t.textColor = regularColor;
+
+  line.addSpacer();
+
+  let t2 = line.addText((-transaction["to_base"]).toFixed(2).toString());
+  t2.font = regularFont;
+  t2.textColor = regularColor;
+  t2.rightAlignText();
 }
