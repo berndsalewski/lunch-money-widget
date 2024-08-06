@@ -73,12 +73,9 @@ async function getWidget() {
 async function getAllData() {
   const cached = cache.get(CACHE_KEY, CACHED_MS);
   if (cached) {
-    console.log("get data from cache");
     return JSON.parse(cached);
   }
   
-  console.log("get data from api server");
-
   const responses = await Promise.all([
     lunchMoneyGetPendingTransactions(),
     lunchMoneyGetPlaidAccountsInfo(),
@@ -86,8 +83,8 @@ async function getAllData() {
     lunchMoneyGetAssetsInfo(),
   ])
 
+  // if not internet connection load data from cache
   if(!responses[0]){
-    console.log("force get data from cache");
     return JSON.parse(cache.forceGet(CACHE_KEY));
   }
   
@@ -224,14 +221,13 @@ async function lunchMoneyGetIncomeAndExpenseData() {
       // display transaction in widget: IF NOT a group transaction AND NOT a splitted transaction
       if((transaction.is_group == false && !transaction.hasChildren) && currentIndex < maxLastTransactions){
         lastTransactions[currentIndex++] = transaction;
-        // console.log(transaction);
       }
       
       // use transaction for calculating totals: IF transaction is excluded from totals OR is a split transaction OR is a group transaction
       if(transaction.exclude_from_totals || transaction.hasChildren || transaction.group_id != null){
         continue;
       }
-      console.log(transaction)
+
       if(transaction.is_income) {
         // for some reason positive amount come with a negative value and vice versa
         income += -transaction.to_base;
@@ -240,10 +236,7 @@ async function lunchMoneyGetIncomeAndExpenseData() {
         spent += transaction.to_base;
       }
 
-      // console.log(`${i}. ${transaction.notes}`);
-
       if(USE_PAY_CYCLE && transaction.is_income && transaction.notes == PAY_CYCLE_ID){
-        //console.log(`Salary found by ${transaction.payee}`);
         break;
       }
     }
@@ -287,7 +280,6 @@ function sendHTTPRequest(url, params, headers, method = 'GET') {
     query += `${key}=${value}`;
   });
   const request = new Request(url + query);
-  //console.log(`Request to: ${url + query}`);
   request.headers = headers;
   request.method = method;
   
@@ -307,10 +299,8 @@ function getStartAndEndDateForPayCycle() {
   month++;
   const currentMonthStr = month < 10 ? "0" + month : month;
   const start_date = `${now.getFullYear()}-${prevMonthStr}-01`;
-  //console.log(`start_date: ${start_date}`);
   const end_date = `${now.getFullYear()}-${currentMonthStr}-${day}`;
-  //console.log(`end_date: ${end_date}`);
-return {start_date, end_date};
+  return {start_date, end_date};
 }
 
 function getReadableDate(date) {
